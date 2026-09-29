@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gestion de Prêts</title>
+<style>
+:root{
+  --bg:#f4f5f7; --card:#fff; --text:#1a1d23; --sub:#6b7280; --line:#e5e7eb;
+  --accent:#2563eb; --accent2:#1d4ed8; --danger:#dc2626; --danger-bg:#fee2e2;
+  --ok:#059669; --ok-bg:#d1fae5;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1115; --card:#1a1d23; --text:#f0f1f3; --sub:#9ca3af; --line:#2a2e37;
+    --accent:#3b82f6; --accent2:#60a5fa; --danger:#f87171; --danger-bg:#3f1d1d;
+    --ok:#34d399; --ok-bg:#0f2e22;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1115; --card:#1a1d23; --text:#f0f1f3; --sub:#9ca3af; --line:#2a2e37;
+  --accent:#3b82f6; --accent2:#60a5fa; --danger:#f87171; --danger-bg:#3f1d1d;
+  --ok:#34d399; --ok-bg:#0f2e22;
+}
+html,body{height:100%;}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+header{position:sticky;top:0;padding:calc(14px + env(safe-area-inset-top,0px)) 16px 14px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:space-between;z-index:10;}
+header h1{font-size:18px;margin:0;font-weight:700;}
+header button{background:rgba(255,255,255,.18);border:none;color:#fff;padding:8px 10px;border-radius:8px;font-size:13px;}
+main{padding:14px;max-width:560px;margin:0 auto;padding-bottom:40px;}
+.tabs{display:flex;gap:8px;margin-bottom:14px;overflow-x:auto;}
+.tabs button{flex:none;padding:8px 14px;border-radius:20px;border:1px solid var(--line);background:var(--card);color:var(--text);font-size:13px;}
+.tabs button.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:10px;}
+.card h3{margin:0 0 4px;font-size:16px;}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;}
+.sub{color:var(--sub);font-size:13px;}
+.badge{font-size:11px;padding:3px 8px;border-radius:20px;font-weight:600;}
+.badge.retard{background:var(--danger-bg);color:var(--danger);}
+.badge.ok{background:var(--ok-bg);color:var(--ok);}
+.montant{font-size:20px;font-weight:700;}
+input,select{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:14px;margin-bottom:10px;}
+label{font-size:12px;color:var(--sub);display:block;margin-bottom:4px;}
+.btn{display:inline-block;padding:10px 16px;border-radius:8px;border:none;background:var(--accent);color:#fff;font-size:14px;font-weight:600;cursor:pointer;}
+.btn.secondary{background:transparent;color:var(--accent);border:1px solid var(--accent);}
+.btn.danger{background:var(--danger);}
+.btn.small{padding:6px 10px;font-size:12px;}
+.btn.block{width:100%;margin-top:6px;}
+.empty{text-align:center;color:var(--sub);padding:40px 10px;}
+.back{color:#fff;background:none;border:none;font-size:15px;padding:0;margin-right:8px;}
+.hist-item{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);font-size:14px;}
+.hist-item:last-child{border-bottom:none;}
+.overflow-x{overflow-x:auto;}
+</style>
+</head>
+<body>
+<header>
+  <div class="row"><button id="backBtn" class="back" style="display:none">←</button><h1 id="pageTitle">Mes Prêts</h1></div>
+  <button id="exportBtn">Exporter</button>
+</header>
+<main id="app"></main>
+
+<script>
+const KEY='pretApp_v1';
+const TAUX=25; // taux fixe %
+let state = load();
+function load(){
+  try{ const s=JSON.parse(localStorage.getItem(KEY)); if(s) return s; }catch(e){}
+  return {emprunteurs:[], prets:[]};
+}
+function save(){ try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){ alert('Erreur de sauvegarde'); } }
+function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+function fmt(n){ return (Math.round(n*100)/100).toLocaleString('fr-FR',{minimumFractionDigits:2}); }
+function today(){ return new Date().toISOString().slice(0,10); }
+
+function moisEcoules(dateDebut, dateFin){
+  const d1 = new Date(dateDebut+'T00:00:00'), d2 = new Date(dateFin+'T00:00:00');
+  let m = (d2.getFullYear()-d1.getFullYear())*12 + (d2.getMonth()-d1.getMonth());
+  if(d2.getDate() < d1.getDate()) m--;
+  return Math.max(0, m);
+}
+function interetPret(p){ return p.montant * p.taux/100 * moisEcoules(p.dateDebut, today()); }
+function duTotalPret(p){ return p.montant + interetPret(p); }
+function soldePret(p){
+  const du = duTotalPret(p);
+  const paye = p.paiements.reduce((s,x)=>s+x.montant,0);
+  return Math.max(0, du - paye);
+}
+function empruntStats(id){
+  const prets = state.prets.filter(p=>p.empruntId===id);
+  const total = prets.reduce((s,p)=>s+p.montant,0);
+  const solde = prets.reduce((s,p)=>s+soldePret(p),0);
+  const retard = prets.some(p=>p.echeance && p.echeance<today() && soldePret(p)>0);
+  return {total,solde,retard,nb:prets.length};
+}
+
+let view = {tab:'emprunteurs', empruntId:null, pretId:null};
+
+function setBack(show, title){
+  document.getElementById('backBtn').style.display = show?'inline-block':'none';
+  document.getElementById('pageTitle').textContent = title;
+}
+
+function render(){
+  const app = document.getElementById('app');
+  if(view.pretId){ return renderPretDetail(app); }
+  if(view.empruntId){ return renderEmpruntDetail(app); }
+  setBack(false,'Mes Prêts');
+  app.innerHTML = `
+    <div class="tabs">
+      <button data-tab="emprunteurs" class="${view.tab==='emprunteurs'?'active':''}">Emprunteurs</button>
+      <button data-tab="ajouter" class="${view.tab==='ajouter'?'active':''}">+ Emprunteur</button>
+      <button data-tab="historique" class="${view.tab==='historique'?'active':''}">Historique</button>
+    </div>
+    <div id="tabContent"></div>`;
+  app.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{view.tab=b.dataset.tab; render();});
+  const c = document.getElementById('tabContent');
+  if(view.tab==='emprunteurs') return renderEmprunteurs(c);
+  if(view.tab==='ajouter') return renderAjouterEmprunteur(c);
+  if(view.tab==='historique') return renderHistorique(c);
+}
+
+function renderEmprunteurs(c){
+  if(state.emprunteurs.length===0){ c.innerHTML='<div class="empty">Aucun emprunteur. Ajoute-en un depuis l\'onglet "+ Emprunteur".</div>'; return; }
+  c.innerHTML = state.emprunteurs.map(e=>{
+    const s = empruntStats(e.id);
+    return `<div class="card" data-id="${e.id}" style="cursor:pointer">
+      <div class="row"><h3>${e.nom}</h3>${s.retard?'<span class="badge retard">Retard</span>':'<span class="badge ok">À jour</span>'}</div>
+      <div class="sub">${(e.qualite==='Autre'?e.qualiteAutre:e.qualite)||''}${e.tel?' · '+e.tel:''}</div>
+      <div class="row"><span class="sub">${s.nb} prêt(s)</span><span class="montant">${fmt(s.solde)} restant</span></div>
+    </div>`;
+  }).join('');
+  c.querySelectorAll('.card').forEach(el=>el.onclick=()=>{view.empruntId=el.dataset.id; render();});
+}
+
+function renderAjouterEmprunteur(c){
+  c.innerHTML = `<div class="card">
+    <label>Nom de l'emprunteur</label>
+    <input id="nomInput" placeholder="Ex: Jean Dupont">
+    <label>Numéro de téléphone</label>
+    <input id="telInput" placeholder="Ex: 06 12 34 56 78">
+    <label>Adresse professionnelle</label>
+    <input id="adresseInput" placeholder="Ex: Rue de la Paix, Kinshasa">
+    <label>Service qui assure la paie</label>
+    <input id="paieInput" placeholder="Ex: Ministère des Finances, Entreprise X">
+    <label>Qualité du client</label>
+    <select id="qualiteInput">
+      <option value="EPST">EPST</option>
+      <option value="FP">FP</option>
+      <option value="Particulier">Particulier</option>
+      <option value="Autre">Autre</option>
+    </select>
+    <div id="qualiteAutreWrap" style="display:none">
+      <label>Précisez la qualité</label>
+      <input id="qualiteAutreInput" placeholder="Ex: ONG, Association...">
+    </div>
+    <button class="btn block" id="saveEmp">Ajouter</button>
+  </div>`;
+  document.getElementById('qualiteInput').onchange=(e)=>{
+    document.getElementById('qualiteAutreWrap').style.display = e.target.value==='Autre'?'block':'none';
+  };
+  document.getElementById('saveEmp').onclick=()=>{
+    const nom = document.getElementById('nomInput').value.trim();
+    if(!nom){ alert('Nom requis'); return; }
+    const tel = document.getElementById('telInput').value.trim();
+    const adresse = document.getElementById('adresseInput').value.trim();
+    const servicePaie = document.getElementById('paieInput').value.trim();
+    const qualite = document.getElementById('qualiteInput').value;
+    const qualiteAutre = qualite==='Autre' ? document.getElementById('qualiteAutreInput').value.trim() : '';
+    state.emprunteurs.push({id:uid(), nom, tel, adresse, servicePaie, qualite, qualiteAutre});
+    save(); view.tab='emprunteurs'; render();
+  };
+}
+
+function renderHistorique(c){
+  const items=[];
+  state.prets.forEach(p=>{
+    const emp = state.emprunteurs.find(e=>e.id===p.empruntId);
+    items.push({date:p.dateDebut, label:`Prêt à ${emp?emp.nom:'?'}`, montant:p.montant, type:'pret'});
+    p.paiements.forEach(pay=>items.push({date:pay.date, label:`Paiement de ${emp?emp.nom:'?'}`, montant:pay.montant, type:'paiement'}));
+  });
+  items.sort((a,b)=>b.date.localeCompare(a.date));
+  if(items.length===0){ c.innerHTML='<div class="empty">Aucune transaction encore.</div>'; return; }
+  c.innerHTML = `<div class="card overflow-x">${items.map(i=>`
+    <div class="hist-item"><span>${i.date} — ${i.label}</span><span style="color:${i.type==='pret'?'var(--accent)':'var(--ok)'}">${i.type==='pret'?'+':'-'}${fmt(i.montant)}</span></div>
+  `).join('')}</div>`;
+}
+
+function renderEmpruntDetail(app){
+  const e = state.emprunteurs.find(x=>x.id===view.empruntId);
+  if(!e){ view.empruntId=null; return render(); }
+  setBack(true, e.nom);
+  const prets = state.prets.filter(p=>p.empruntId===e.id);
+  const infoCard = view.editEmp ? `
+    <div class="card">
+      <label>Nom de l'emprunteur</label>
+      <input id="editNom" value="${e.nom}">
+      <label>Numéro de téléphone</label>
+      <input id="editTel" value="${e.tel||''}">
+      <label>Adresse professionnelle</label>
+      <input id="editAdresse" value="${e.adresse||''}">
+      <label>Service qui assure la paie</label>
+      <input id="editPaie" value="${e.servicePaie||''}">
+      <label>Qualité du client</label>
+      <select id="editQualite">
+        ${['EPST','FP','Particulier','Autre'].map(q=>`<option value="${q}" ${e.qualite===q?'selected':''}>${q}</option>`).join('')}
+      </select>
+      <div id="editQualiteAutreWrap" style="display:${e.qualite==='Autre'?'block':'none'}">
+        <label>Précisez la qualité</label>
+        <input id="editQualiteAutre" value="${e.qualiteAutre||''}" placeholder="Ex: ONG, Association...">
+      </div>
+      <button class="btn block" id="saveEditEmp">Enregistrer</button>
+      <button class="btn secondary block" id="cancelEditEmp" style="margin-top:8px">Annuler</button>
+    </div>` : `
+    <div class="card">
+      <div class="row"><span class="sub">Téléphone</span><span>${e.tel||'—'}</span></div>
+      <div class="row"><span class="sub">Adresse professionnelle</span><span>${e.adresse||'—'}</span></div>
+      <div class="row"><span class="sub">Service qui assure la paie</span><span>${e.servicePaie||'—'}</span></div>
+      <div class="row"><span class="sub">Qualité du client</span><span>${e.qualite==='Autre'?(e.qualiteAutre||'Autre'):(e.qualite||'—')}</span></div>
+      <button class="btn secondary block" id="editEmpBtn" style="margin-top:10px">Modifier ces infos</button>
+    </div>`;
+  app.innerHTML = `
+    ${infoCard}
+    <div class="card">
+      <label>Montant du nouveau prêt</label>
+      <input id="montantInput" type="number" placeholder="Ex: 1000">
+      <label>Date du prêt</label>
+      <input id="dateInput" type="date" value="${today()}">
+      <label>Échéance (optionnel)</label>
+      <input id="echInput" type="date">
+      <div class="sub" style="margin-bottom:8px">Taux d'intérêt fixe : ${TAUX}%</div>
+      <button class="btn block" id="addPret">Créer le prêt</button>
+    </div>
+    <h3 style="margin:16px 0 8px">Prêts</h3>
+    <div id="pretsList"></div>
+    <button class="btn danger block" id="delEmp" style="margin-top:16px">Supprimer cet emprunteur</button>
+  `;
+  if(view.editEmp){
+    document.getElementById('editQualite').onchange=(ev)=>{
+      document.getElementById('editQualiteAutreWrap').style.display = ev.target.value==='Autre'?'block':'none';
+    };
+    document.getElementById('saveEditEmp').onclick=()=>{
+      const nom = document.getElementById('editNom').value.trim();
+      if(!nom){ alert('Nom requis'); return; }
+      e.nom = nom;
+      e.tel = document.getElementById('editTel').value.trim();
+      e.adresse = document.getElementById('editAdresse').value.trim();
+      e.servicePaie = document.getElementById('editPaie').value.trim();
+      e.qualite = document.getElementById('editQualite').value;
+      e.qualiteAutre = e.qualite==='Autre' ? document.getElementById('editQualiteAutre').value.trim() : '';
+      save(); view.editEmp=false; render();
+    };
+    document.getElementById('cancelEditEmp').onclick=()=>{ view.editEmp=false; render(); };
+  } else {
+    document.getElementById('editEmpBtn').onclick=()=>{ view.editEmp=true; render(); };
+  }
+  const list = document.getElementById('pretsList');
+  if(prets.length===0){ list.innerHTML='<div class="empty">Aucun prêt pour le moment.</div>'; }
+  else{
+    list.innerHTML = prets.map(p=>{
+      const solde = soldePret(p);
+      const retard = p.echeance && p.echeance<today() && solde>0;
+      return `<div class="card" data-id="${p.id}" style="cursor:pointer">
+        <div class="row"><h3>${fmt(p.montant)} prêté</h3>${retard?'<span class="badge retard">Retard</span>':(solde<=0?'<span class="badge ok">Soldé</span>':'')}</div>
+        <div class="sub">Le ${p.dateDebut}${p.echeance?' · Échéance '+p.echeance:''} · ${moisEcoules(p.dateDebut,today())} mois écoulé(s)</div>
+        <div class="row" style="margin-top:6px"><span class="sub">À rembourser: ${fmt(duTotalPret(p))}</span><span class="montant">${fmt(solde)} restant</span></div>
+      </div>`;
+    }).join('');
+    list.querySelectorAll('.card').forEach(el=>el.onclick=()=>{view.pretId=el.dataset.id; render();});
+  }
+  document.getElementById('addPret').onclick=()=>{
+    const montant = parseFloat(document.getElementById('montantInput').value);
+    if(!montant || montant<=0){ alert('Montant invalide'); return; }
+    const dateDebut = document.getElementById('dateInput').value || today();
+    const echeance = document.getElementById('echInput').value || null;
+    state.prets.push({id:uid(), empruntId:e.id, montant, taux:TAUX, dateDebut, echeance, paiements:[]});
+    save(); render();
+  };
+  document.getElementById('delEmp').onclick=()=>{
+    if(!confirm('Supprimer cet emprunteur et tous ses prêts ?')) return;
+    state.prets = state.prets.filter(p=>p.empruntId!==e.id);
+    state.emprunteurs = state.emprunteurs.filter(x=>x.id!==e.id);
+    save(); view.empruntId=null; render();
+  };
+}
+
+function renderPretDetail(app){
+  const p = state.prets.find(x=>x.id===view.pretId);
+  if(!p){ view.pretId=null; return render(); }
+  const e = state.emprunteurs.find(x=>x.id===p.empruntId);
+  setBack(true, 'Prêt · '+(e?e.nom:''));
+  const mois = moisEcoules(p.dateDebut, today());
+  const du = duTotalPret(p);
+  const solde = soldePret(p);
+  app.innerHTML = `
+    <div class="card">
+      <div class="row"><span class="sub">Montant prêté</span><span>${fmt(p.montant)}</span></div>
+      <div class="row"><span class="sub">Taux mensuel</span><span>${p.taux}% / mois</span></div>
+      <div class="row"><span class="sub">Mois écoulés</span><span>${mois}</span></div>
+      <div class="row"><span class="sub">Intérêt cumulé</span><span>${fmt(interetPret(p))}</span></div>
+      <div class="row"><span class="sub">Total dû</span><span>${fmt(du)}</span></div>
+      <div class="row"><span class="sub">Échéance</span><span>${p.echeance||'—'}</span></div>
+      <div class="row" style="margin-top:8px;border-top:1px solid var(--line);padding-top:8px"><span>Solde restant</span><span class="montant">${fmt(solde)}</span></div>
+    </div>
+    ${solde>0?`<div class="card">
+      <label>Enregistrer un paiement</label>
+      <input id="payInput" type="number" placeholder="Montant">
+      <input id="payDate" type="date" value="${today()}">
+      <button class="btn block" id="addPay">Enregistrer</button>
+    </div>`:''}
+    <h3 style="margin:16px 0 8px">Paiements</h3>
+    <div class="card overflow-x">${p.paiements.length?p.paiements.map(pay=>`<div class="hist-item"><span>${pay.date}</span><span>${fmt(pay.montant)}</span></div>`).join(''):'<div class="empty">Aucun paiement.</div>'}</div>
+    <button class="btn danger block" id="delPret" style="margin-top:16px">Supprimer ce prêt</button>
+  `;
+  const payBtn = document.getElementById('addPay');
+  if(payBtn) payBtn.onclick=()=>{
+    const montant = parseFloat(document.getElementById('payInput').value);
+    if(!montant||montant<=0){ alert('Montant invalide'); return; }
+    const date = document.getElementById('payDate').value || today();
+    p.paiements.push({id:uid(), montant, date});
+    save(); render();
+  };
+  document.getElementById('delPret').onclick=()=>{
+    if(!confirm('Supprimer ce prêt ?')) return;
+    state.prets = state.prets.filter(x=>x.id!==p.id);
+    save(); view.pretId=null; render();
+  };
+}
+
+document.getElementById('backBtn').onclick=()=>{
+  if(view.pretId){ view.pretId=null; } else if(view.empruntId){ view.empruntId=null; view.editEmp=false; }
+  render();
+};
+
+document.getElementById('exportBtn').onclick=async ()=>{
+  let csv = 'Type,Emprunteur,Date,Montant,Echeance,Solde\n';
+  state.prets.forEach(p=>{
+    const e = state.emprunteurs.find(x=>x.id===p.empruntId);
+    csv += `Pret,${e?e.nom:'?'},${p.dateDebut},${p.montant},${p.echeance||''},${fmt(soldePret(p))}\n`;
+    p.paiements.forEach(pay=>{ csv += `Paiement,${e?e.nom:'?'},${pay.date},${pay.montant},,\n`; });
+  });
+  try{
+    const downloads = await claude.use('downloads');
+    if(downloads){
+      await downloads.save({filename:'prets_export.csv', data:csv});
+      return;
+    }
+  }catch(err){}
+  alert("Export indisponible dans cet environnement. Copie les données manuellement si besoin.");
+};
+
+render();
+</script>
+</body>
+</html>
